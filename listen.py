@@ -6,11 +6,7 @@ import win32con
 from pynput import keyboard, mouse
 import winsound
 import time
-import serial
-import serial.tools.list_ports
 from threading import Thread, Event
-
-# from mouse.makcu_mouse import internal_recoil_control, makcu_mouse_move,recoil_active
 
 detecting = False
 listening = True
@@ -37,255 +33,19 @@ recoil_status = False
 recoil_thread = None
 recoil_event = None
 
-ser = None
-# 串口配置
-SERIAL_PORT = 'COM8'
-SERIAL_BAUDRATE = 115200
+# 保存鼠标控制器实例的全局变量
+mouse_controller = None
 
-def find_serial_port():
+def set_mouse_controller(controller):
     """
-    自动查找可用的串口设备
+    设置鼠标控制器实例，供其他函数使用
     """
-    ports = serial.tools.list_ports.comports()
-    if ports:
-        # 返回第一个找到的串口设备
-        return ports[0].device
-    return None
+    global mouse_controller
+    mouse_controller = controller
 
-def init_serial(port=None, baudrate=115200):
-    """
-    初始化串口连接
-    如果未指定端口，则自动检测可用端口
-    """
-    global ser, SERIAL_PORT, SERIAL_BAUDRATE
-    
-    # 如果没有指定端口，则自动查找
-    if port is None:
-        print("正在自动检测串口设备...")
-        port = find_serial_port()
-        if port is None:
-            print("未找到可用的串口设备")
-            return False
-        print(f"找到串口设备: {port}")
-    
-    SERIAL_PORT = port
-    SERIAL_BAUDRATE = baudrate
-    
-    try:
-        if ser and ser.is_open:
-            ser.close()
-        ser = serial.Serial(port, baudrate, timeout=1)
-        print(f"串口 {port} 连接成功")
-        return True
-    except Exception as e:
-        print(f"串口连接失败: {e}")
-        return False
-def reconnect_serial():
-    """
-    重新连接串口
-    """
-    global ser, SERIAL_PORT, SERIAL_BAUDRATE
-    try:
-        if ser and ser.is_open:
-            ser.close()
-    except:
-        pass
-    return init_serial(port=SERIAL_PORT, baudrate=SERIAL_BAUDRATE)
-
-def check_serial_connection():
-    """
-    检查串口连接状态，如果断开则尝试重连
-    """
-    global ser
-    try:
-        if ser is None or not ser.is_open:
-            print("检测到串口断开，正在尝试重连...")
-            return reconnect_serial()
-    except Exception as e:
-        print(f"串口连接异常: {e}")
-        return reconnect_serial()
-    return True
-
-recoil_active = False
-def makcu_mouse_move(dx, dy):
-    """
-    通过串口发送移动指令到外部硬件
-    格式: "km.move(dx,dy)\r\n"
-    """
-    global ser  
-    # 简化错误处理，避免复杂的重试机制
-    if ser is None or not ser.is_open:
-        # 不立即尝试重连，而是直接返回失败
-        return False
-        
-    command = f"km.move({int(dx)},{int(dy)})\r\n"
-    try:
-        ser.write(command.encode())
-        return True
-    except Exception as e:
-        check_serial_connection()
-        return False
-
-# 新增：内部压枪函数
-def internal_recoil_control():
-    """
-    内部压枪控制函数，在独立线程中运行
-    按照指定模式：先发送km.move(6,-8)，等待约4ms，然后发送km.move(-6,6)
-    """
-    global recoil_active, ser
-    wait_time = 4
-    while recoil_active:
-        # 检查串口连接
-        if not check_serial_connection():
-            time.sleep(0.004)  # 4ms延迟
-            continue
-            
-        if ser and ser.is_open:
-            # 第一步：发送 km.move(6,-8)
-            dx1=-2
-            dy1=6
-            command1 = f"km.move({dx1},{dy1})\r\n"
-            makcu_mouse_move(dx1,dy1)
-            # try:
-            #     ser.write(command1.encode())
-            # except Exception as e:
-            #     print(f"内部压枪发送失败: {e}")
-            #     # 尝试重新连接
-            #     check_serial_connection()
-            #     continue
-                
-            # 等待约4ms
-            time.sleep(wait_time/1000)
-            
-            # 检查是否还需要继续（可能在等待期间已停用）
-            if not recoil_active:
-                break
-                
-            # 第二步：发送 km.move(-6,6)
-            dx2=2
-            dy2=-4
-            command2 = f"km.move({dx2},{dy2})\r\n"
-            makcu_mouse_move(dx2,dy2)
-            # try:
-            #     ser.write(command2.encode())
-            # except Exception as e:
-            #     print(f"内部压枪发送失败: {e}")
-            #     # 尝试重新连接
-            #     check_serial_connection()
-                
-        # 总周期约为8ms（两个步骤各4ms）
-        time.sleep(wait_time/1000)
-
-def start_internal_recoil():
-    """
-    启动内部压枪功能
-    """
-    global recoil_thread, recoil_event, recoil_active
-    if not recoil_active and enable_recoil:
-        recoil_active = True
-        recoil_thread = Thread(target=internal_recoil_control, daemon=True)
-        recoil_thread.start()
-        print("内部压枪已启动")
-
-def stop_internal_recoil():
-    """
-    停止内部压枪功能
-    """
-    global recoil_active
-    if recoil_active:
-        recoil_active = False
-        print("内部压枪已停止")
-
-# def send_to_hardware(dx, dy):
-#     """
-#     通过串口发送移动指令到外部硬件
-#     格式: "m dx:dy\n"
-#     """
-#     global ser
-#     # 检查串口连接
-#     if not check_serial_connection():
-#         return False
-        
-#     if ser and ser.is_open:
-#         command = f"m{int(dx)}:{int(dy)}  \n"
-#         try:
-#             ser.write(command.encode())
-#             # print(f"m{int(dx)}:{int(dy)}")
-#             return True
-#         except Exception as e:
-#             print(f"串口发送失败: {e}")
-#             # 尝试重新连接
-#             if not check_serial_connection():
-#                 return False
-#             # 重新发送
-#             try:
-#                 ser.write(command.encode())
-#                 return True
-#             except Exception as e2:
-#                 print(f"重新发送失败: {e2}")
-#                 return False
-#     return False
-
-def send_click_command():
-    """
-    发送点击命令到外部硬件
-    格式: "m10:50x\n"
-    """
-    pass
-    # global ser
-    # # 检查串口连接
-    # if not check_serial_connection():
-    #     return False
-        
-    # if ser and ser.is_open:
-    #     try:
-    #         ser.write(b"m10:50x\n")
-    #         return True
-    #     except Exception as e:
-    #         print(f"发送点击命令失败: {e}")
-    #         # 尝试重新连接
-    #         if not check_serial_connection():
-    #             return False
-    #         # 重新发送
-    #         try:
-    #             ser.write(b"m10:50x\n")
-    #             return True
-    #         except Exception as e2:
-    #             print(f"重新发送失败: {e2}")
-    #             return False
-
-# 新增函数：发送字符到串口
-def send_char_to_serial(char):
-    """
-    发送单个字符到串口
-    """
-    global ser
-    return
-    # 检查串口连接
-    if not check_serial_connection():
-        return False
-        
-    if ser and ser.is_open:
-        try:
-            ser.write(char.encode())
-            return True
-        except Exception as e:
-            print(f"发送字符 {char} 失败: {e}")
-            # 尝试重新连接
-            if not check_serial_connection():
-                return False
-            # 重新发送
-            try:
-                ser.write(char.encode())
-                return True
-            except Exception as e2:
-                print(f"重新发送失败: {e2}")
-                return False
-    return False
 def listen_init(args):
     global caps_lock
     caps_lock = args.caps_lock
-
 
 def get_D_L():
     global detecting, listening, left_lock, caps_lock
@@ -380,12 +140,14 @@ def listen_m_click(x, y, button, pressed):
             # 检查是否左右键都按下且Caps Lock启用
             if mouse1_pressed and mouse2_pressed and is_caps_lock_on:
                 recoil_status =True
-                # 替换发送's'为启动内部压枪
-                start_internal_recoil()
+                # 启动压枪控制
+                if mouse_controller and enable_recoil:
+                    mouse_controller.start_recoil()
             elif recoil_status == True:
                 recoil_status = False
-                # 替换发送'x'为停止内部压枪
-                stop_internal_recoil()
+                # 停止压枪控制
+                if mouse_controller:
+                    mouse_controller.stop_recoil()
                 
             if left_lock:
                 backforce = 6
@@ -402,8 +164,9 @@ def listen_m_click(x, y, button, pressed):
             # if (mouse1_pressed and mouse2_pressed):
             if (mouse1_pressed or mouse2_pressed) and recoil_status == True:
                 recoil_status = False
-                # 替换发送'x'为停止内部压枪
-                stop_internal_recoil()
+                # 停止压枪控制
+                if mouse_controller:
+                    mouse_controller.stop_recoil()
                 
             if left_lock:
                 backforce = 0
@@ -449,7 +212,7 @@ def PID(args, error):
 
 def move_mouse(args):
     global detecting, screen_center, destination, last, width, scale, pre_error, integral, pos
-    global auto_fire, time_fire, shift_pressed, right_lock, mouse2_pressed, mouse1_pressed, ser
+    global auto_fire, time_fire, shift_pressed, right_lock, mouse2_pressed, mouse1_pressed
     if 1:
         if destination[0] == -1:
             if last[0] == -1:
@@ -466,7 +229,7 @@ def move_mouse(args):
         if args.pid:
             move = PID(args, mouse_vector)
             # 使用串口发送移动指令替代win32api.mouse_event
-            makcu_mouse_move(move[0], move[1] / 2)
+            mouse_controller.send_mouse_move(move[0], move[1] / 2)
             last_mv = last - destination + mouse_vector
             if not auto_fire or time.time()-time_fire <= 0.0625: return  # 125ms
             # norm <= width/2  # higher divisor increases precision but limits fire rate
@@ -482,9 +245,9 @@ def move_mouse(args):
                 # send_click_command()
                 time_fire = time.time()
             return
-        # 非PID模式也使用串口控制
+        # 非PID模式也使用控制器控制
         if norm <= width*4/3:
-            makcu_mouse_move(mouse_vector[0]*0.5, mouse_vector[1]*0.6)
+            mouse_controller.send_mouse_move(mouse_vector[0]*0.5, mouse_vector[1]*0.6)
             return
     else:
         pre_error = integral = np.array([0., 0.])

@@ -10,14 +10,14 @@ import listen
 from args_ import *
 from capture import *
 from draw import show_target
-from listen import listen_k_press, listen_k_release, listen_m_click, listen_init, get_D_L, mouse_redirection, move_mouse,init_serial
+from listen import listen_k_press, listen_k_release, listen_m_click, listen_init, get_D_L, mouse_redirection, move_mouse
 import tempfile
-
-# from mouse.com_util import init_serial
 
 ##import cv2
 ##from datetime import datetime
 
+# 导入MakcuMouseController
+from mouse.makcu_mouse import MakcuMouseController
 
 global detecting, listening
 
@@ -86,7 +86,19 @@ if __name__ == "__main__":
         trt_init(args)
     print("main start")
     time_start = time.time()
-    init_serial()
+
+    # 初始化MakcuMouseController并将其传递给listen模块
+    handlike = False
+    if not args.pid:    
+        handlike = True
+    mouse_controller = MakcuMouseController(baudrate=115200,handlike=handlike)
+    if not mouse_controller.init_serial():
+        print("串口初始化失败，程序退出")
+        sys.exit(1)
+    
+    # 将mouse_controller设置到listen模块中供其使用
+    listen.set_mouse_controller(mouse_controller)
+
     count = 0
     time_capture_total = 0
     avg_predict_time = 0
