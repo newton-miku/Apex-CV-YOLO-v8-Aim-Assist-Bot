@@ -114,11 +114,12 @@ if __name__ == "__main__":
             # print(f"shot time: {(time.time() - time_shot)*1000:.2f}ms")
             # predict the image
             time.sleep(args.wait)
-            if args.model[-3:] == ".pt" or args.model[-7:] == ".engine":
+            # 提前缓存后缀判断结果，避免每次循环都做字符串切片与比较
+            if args.model.endswith(('.pt', '.engine')):
                 predict_output = predict(args, img)
-                # print(predict_output.boxes.conf, predict_output.boxes.cls)
-                boxes = predict_output.boxes
-                boxes = boxes[boxes[:].cls == args.target_index].cpu().xyxy.numpy()
+                # 直接一次性在GPU上完成过滤与格式转换，减少CPU-GPU往返
+                tgt = predict_output.boxes.data[predict_output.boxes.cls == args.target_index, :4]
+                boxes = tgt.cpu().numpy()        # 已是对应的xyxy格式，无需再调.xyxy
             else:
                 boxes, scores, cls_inds = trt(args, img)
                 # print(scores, cls_inds)
@@ -139,7 +140,7 @@ if __name__ == "__main__":
             # print(f"total time: {(time.time() - time_shot)*1000:.3f}ms")
             count += 1
 
-            if (count % 100 == 0):
+            if (count % 300 == 0):
                 time_per_100frame = time.time() - time_start
                 time_start = time.time()
                 print(f"Screenshot fps: {count / time_per_100frame:.2f}", )

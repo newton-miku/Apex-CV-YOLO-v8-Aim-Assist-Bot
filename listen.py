@@ -222,6 +222,12 @@ def move_mouse(args):
                 mouse_vector = np.array([0, 0])
         else:
             mouse_vector = (destination - pos) / scale
+        
+        # 限制最大移动幅度，防止大幅度跳动
+        max_movement = 70  # 最大移动像素数
+        mouse_vector[0] = np.clip(mouse_vector[0], -max_movement, max_movement)
+        mouse_vector[1] = np.clip(mouse_vector[1], -max_movement, max_movement)
+        
         norm = np.linalg.norm(mouse_vector)
         # if destination not in region
         if norm <= args.aim_deadzone or (destination[0] == screen_center[0] and destination[1] == screen_center[1]): return
@@ -229,21 +235,25 @@ def move_mouse(args):
         if args.pid:
             move = PID(args, mouse_vector)
             # 使用串口发送移动指令替代win32api.mouse_event
+            # 限制PID输出的最大值
+            max_pid_output = 100
+            move[0] = np.clip(move[0], -max_pid_output, max_pid_output)
+            move[1] = np.clip(move[1], -max_pid_output, max_pid_output)
             mouse_controller.send_mouse_move(move[0], move[1] / 2)
-            last_mv = last - destination + mouse_vector
-            if not auto_fire or time.time()-time_fire <= 0.0625: return  # 125ms
-            # norm <= width/2  # higher divisor increases precision but limits fire rate
-            # move[0]*last_mv[0] >= 0  # ensures tracking
-            if ( shift_pressed and not right_lock and mouse2_pressed and not mouse1_pressed  # scope fire
-            and norm <= width*2/3 and move[0]*last_mv[0] >= 0 ):
-                # 发送点击命令到外部硬件
-                # send_click_command()
-                time_fire = time.time()
-            elif ( ((shift_pressed and not mouse2_pressed) or (right_lock and mouse2_pressed and not mouse1_pressed))  # hip fire
-            and norm <= width*3/4 and move[0]*last_mv[0] >= 0 ):
-                # 发送点击命令到外部硬件
-                # send_click_command()
-                time_fire = time.time()
+            # last_mv = last - destination + mouse_vector
+            # if not auto_fire or time.time()-time_fire <= 0.0625: return  # 125ms
+            # # norm <= width/2  # higher divisor increases precision but limits fire rate
+            # # move[0]*last_mv[0] >= 0  # ensures tracking
+            # if ( shift_pressed and not right_lock and mouse2_pressed and not mouse1_pressed  # scope fire
+            # and norm <= width*2/3 and move[0]*last_mv[0] >= 0 ):
+            #     # 发送点击命令到外部硬件
+            #     # send_click_command()
+            #     time_fire = time.time()
+            # elif ( ((shift_pressed and not mouse2_pressed) or (right_lock and mouse2_pressed and not mouse1_pressed))  # hip fire
+            # and norm <= width*3/4 and move[0]*last_mv[0] >= 0 ):
+            #     # 发送点击命令到外部硬件
+            #     # send_click_command()
+            #     time_fire = time.time()
             return
         # 非PID模式也使用控制器控制
         if norm <= width*4/3:
@@ -287,3 +297,4 @@ def mouse_redirection(args, boxes):
     last = destination
     destination = boxes_center[np.argmin(dis)].astype(int)
     # print(destination)
+    
