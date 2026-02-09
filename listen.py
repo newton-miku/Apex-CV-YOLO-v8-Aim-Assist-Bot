@@ -1,3 +1,4 @@
+import threading
 import numpy as np
 import win32api
 import win32gui
@@ -7,6 +8,36 @@ from pynput import keyboard, mouse
 import winsound
 import time
 from threading import Thread, Event
+
+# 缓存鼠标控制器实例，避免重复创建（.position 仍会实时获取最新位置）
+_mouse_controller_instance = None
+
+def get_mouse_controller():
+    """获取缓存的鼠标控制器实例"""
+    global _mouse_controller_instance
+    if _mouse_controller_instance is None:
+        _mouse_controller_instance = mouse.Controller()
+    return _mouse_controller_instance
+
+# 异步播放蜂鸣声的线程
+_beep_thread = None
+_beep_lock = threading.Lock()
+
+def async_beep(frequency: int, duration: int):
+    """异步播放蜂鸣声，不阻塞主线程"""
+    def beep_worker(freq, dur):
+        try:
+            winsound.Beep(freq, dur)
+        except Exception:
+            pass
+
+    global _beep_thread
+    with _beep_lock:
+        if _beep_thread and _beep_thread.is_alive():
+            # 如果前一个蜂鸣还在播放，直接返回避免重叠
+            return
+        _beep_thread = threading.Thread(target=beep_worker, args=(frequency, duration), daemon=True)
+        _beep_thread.start()
 
 detecting = False
 listening = True
@@ -54,12 +85,12 @@ def get_D_L():
             if not left_lock:
                 detecting = False
                 left_lock = True
-                winsound.Beep(800, 100)
+                async_beep(800, 100)
         else:
             if left_lock:
                 detecting = False
                 left_lock = False
-                winsound.Beep(400, 100)
+                async_beep(400, 100)
     return detecting, listening
 
 
@@ -69,8 +100,8 @@ def listen_k_press(key):
         detecting = False
         listening = False
         print("listeners stop")
-        winsound.Beep(700, 100)
-        winsound.Beep(600, 100)
+        async_beep(700, 100)
+        async_beep(600, 100)
         return False
     # if key == keyboard.Key.shift:
     #     shift_pressed = True
@@ -86,7 +117,7 @@ def listen_k_press(key):
         # right_lock = not right_lock
         # winsound.Beep(900 if right_lock else 500, 200)
         enable_recoil = not enable_recoil
-        winsound.Beep(900 if enable_recoil else 500, 200)
+        async_beep(900 if enable_recoil else 500, 200)
     # if key == keyboard.Key.up:  # AUTO_FIRE is detected by EAC
     #     detecting = False
     #     auto_fire = not auto_fire
@@ -96,12 +127,12 @@ def listen_k_press(key):
             if not left_lock:
                 detecting = False
                 left_lock = True
-                winsound.Beep(800, 100)
+                async_beep(800, 100)
         if key == keyboard.KeyCode.from_char('g'):
             if left_lock:
                 detecting = False
                 left_lock = False
-                winsound.Beep(400, 100)
+                async_beep(400, 100)
 
 
 def listen_k_release(key):
@@ -224,7 +255,7 @@ def move_mouse(args):
             mouse_vector = (destination - pos) / scale
         
         # 限制最大移动幅度，防止大幅度跳动
-        max_movement = 70  # 最大移动像素数
+        max_movement = 250  # 最大移动像素数
         mouse_vector[0] = np.clip(mouse_vector[0], -max_movement, max_movement)
         mouse_vector[1] = np.clip(mouse_vector[1], -max_movement, max_movement)
         
@@ -236,10 +267,10 @@ def move_mouse(args):
             move = PID(args, mouse_vector)
             # 使用串口发送移动指令替代win32api.mouse_event
             # 限制PID输出的最大值
-            max_pid_output = 100
+            max_pid_output = 200
             move[0] = np.clip(move[0], -max_pid_output, max_pid_output)
             move[1] = np.clip(move[1], -max_pid_output, max_pid_output)
-            mouse_controller.send_mouse_move(move[0], move[1] / 2)
+            mouse_controller.send_mouse_move(move[0], move[1] /3)
             # last_mv = last - destination + mouse_vector
             # if not auto_fire or time.time()-time_fire <= 0.0625: return  # 125ms
             # # norm <= width/2  # higher divisor increases precision but limits fire rate
@@ -272,7 +303,7 @@ def mouse_redirection(args, boxes):
         destination = np.array([-1, -1])
         return
     # pos = np.array(win32api.GetCursorPos())  # GetCursorPos is monitored by BattlEye
-    pos = np.array(mouse.Controller().position)
+    pos = np.array(get_mouse_controller().position)
 
     # get the center of the boxes
     boxes_center = (
@@ -287,6 +318,22 @@ def mouse_redirection(args, boxes):
     # map the box from the image coordinate to the screen coordinate
     start_point = screen_center - screen_size[1] * args.crop_size / 2
     start_point = list(map(int, start_point))
+    boxes_screen = boxes.copy()
+    boxes_screen[:, 0] = boxes_screen[:, 0] + start_point[0]
+    boxes_screen[:, 1] = boxes_screen[:, 1] + start_point[1]
+    boxes_screen[:, 2] = boxes_screen[:, 2] + start_point[0]
+    boxes_screen[:, 3] = boxes_screen[:, 3] + start_point[1]
+    # inside = np.any(
+    #     (pos[0] >= boxes_screen[:, 0]) &
+    #     (pos[0] <= boxes_screen[:, 2]) &
+    #     (pos[1] >= boxes_screen[:, 1]) &
+    #     (pos[1] <= boxes_screen[:, 3])
+    # )
+    # if not inside:
+    #     width = -1
+    #     last = destination
+    #     destination = np.array([-1, -1])
+    #     return
     boxes_center[:, 0] = boxes_center[:, 0] + start_point[0]
     boxes_center[:, 1] = boxes_center[:, 1] + start_point[1]
 

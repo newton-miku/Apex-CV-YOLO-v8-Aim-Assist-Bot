@@ -126,96 +126,84 @@ class BaseEngine(object):
         origin_img = img
         img, ratio = preproc(origin_img, self.imgsz, self.mean, self.std)
         data = self.infer(img)
+
+        dets = None
+
         if end2end:
-            # 检查data的格式并正确处理
-            if len(data) == 1:
-                # 如果只有一个输出，可能是合并的输出格式
-                raw_data = data[0]
-                # 尝试解析为合并的end2end格式
-                # 假设格式为 [num_detections, boxes, scores, class_ids]
-                # 需要根据实际输出格式进行调整
-                try:
-                    # 假设第一个元素是检测数量
-                    num = np.array([raw_data[0]])
-                    # 剩余的是边界框、分数和类别
-                    remaining = raw_data[1:]
-                    # 根据实际情况分割数据
-                    # 这里假设格式是连续的: boxes, scores, class_ids
-                    final_boxes = remaining[:len(remaining)//3*4].reshape(-1, 4)
-                    final_scores = remaining[len(remaining)//3*4:len(remaining)//3*5]
-                    final_cls_inds = remaining[len(remaining)//3*5:]
-                    
-                    final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
-                    dets = np.concatenate([
-                        final_boxes[:int(num[0])], 
-                        np.array(final_scores)[:int(num[0])].reshape(-1, 1), 
-                        np.array(final_cls_inds)[:int(num[0])].reshape(-1, 1)
-                    ], axis=-1)
-                except Exception as e:
-                    # 如果解析失败，则当作非end2end模式处理
-                    end2end = False
-                    print(f"End2end parsing failed: {e}")
-            else:
-                # 原始逻辑，如果有4个输出则直接解包
+            if isinstance(data, list) and len(data) == 4:
                 num, final_boxes, final_scores, final_cls_inds = data
-                final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
-                dets = np.concatenate([final_boxes[:num[0]], np.array(final_scores)[:num[0]].reshape(-1, 1), np.array(final_cls_inds)[:num[0]].reshape(-1, 1)], axis=-1)
+                final_boxes = np.reshape(final_boxes / ratio, (-1, 4))
+                if hasattr(num, "__len__"):
+                    n = int(num[0])
+                else:
+                    n = int(num)
+                n = max(min(n, final_boxes.shape[0], len(final_scores), len(final_cls_inds)), 0)
+                dets = np.concatenate(
+                    [
+                        final_boxes[:n],
+                        np.array(final_scores)[:n].reshape(-1, 1),
+                        np.array(final_cls_inds)[:n].reshape(-1, 1),
+                    ],
+                    axis=-1,
+                )
+            else:
+                end2end = False
+
         if not end2end:
-            # 直接使用原始的reshape方法，但添加错误处理和调试信息
-            raw_data = data[0] if isinstance(data, list) else data
-            
-            # 尝试不同的输出格式
-            successful_reshape = False
-            predictions = None
-            
-            # 尝试YOLOv8标准格式 (1, num_boxes, 4 + 1 + n_classes)
-            box_attr_count = 5 + self.n_classes
-            total_elements = raw_data.shape[0]
-            
-            # 检查是否可以整除
-            if total_elements % box_attr_count == 0:
-                num_boxes = total_elements // box_attr_count
-                try:
-                    predictions = np.reshape(raw_data, (1, num_boxes, box_attr_count))[0]
-                    successful_reshape = True
-                except ValueError:
-                    pass
-            
-            # 如果上面的方法失败，尝试其他可能的格式
-            if not successful_reshape:
-                # 尝试不同的n_classes值（常见的COCO数据集是80类）
-                for try_n_classes in [80, 1]:  # 尝试80类（COCO）或1类
+            if isinstance(data, list):
+                if len(data) == 0:
+                    flat = np.array([], dtype=np.float32)
+                elif len(data) == 1:
+                    flat = np.array(data[0]).ravel()
+                else:
+                    flat = np.concatenate([np.array(d).ravel() for d in data])
+            else:
+                flat = np.array(data).ravel()
+
+            total_elements = flat.size
+            box_attr_min = 5 + self.n_classes
+
+            if total_elements < box_attr_min:
+                dets = None
+            else:
+                successful_reshape = False
+                predictions = None
+
+                possible_n_classes = [3, self.n_classes, 80, 2, 1]
+                for try_n_classes in possible_n_classes:
                     box_attr_count = 5 + try_n_classes
-                    if total_elements % box_attr_count == 0:
-                        num_boxes = total_elements // box_attr_count
-                        try:
-                            predictions = np.reshape(raw_data, (1, num_boxes, box_attr_count))[0]
-                            successful_reshape = True
-                            # 更新n_classes
-                            self.n_classes = try_n_classes
-                            break
-                        except ValueError:
-                            pass
-            
-            # 如果仍然失败，尝试使用F order（Fortran顺序）
-            if not successful_reshape:
-                try:
-                    # 这是原始代码中的方法
-                    predictions = np.reshape(raw_data, (1, -1, int(5+self.n_classes)), order="F")[0]
-                    successful_reshape = True
-                except ValueError:
-                    pass
-            
-            # 如果所有方法都失败，抛出异常并提供调试信息
-            if not successful_reshape:
-                raise ValueError(f"Cannot reshape array of size {total_elements} into valid prediction format. "
-                                f"n_classes={self.n_classes}, attempted box_attr_count={box_attr_count}")
-            
-            dets = self.postprocess(predictions, ratio, iou, conf)
+                    if total_elements % box_attr_count != 0:
+                        continue
+                    num_boxes = total_elements // box_attr_count
+                    try:
+                        predictions = flat.reshape(1, num_boxes, box_attr_count)[0]
+                        successful_reshape = True
+                        self.n_classes = try_n_classes
+                        break
+                    except ValueError:
+                        continue
+
+                if not successful_reshape:
+                    try:
+                        box_attr_count = 5 + self.n_classes
+                        predictions = np.reshape(
+                            flat, (1, -1, box_attr_count), order="F"
+                        )[0]
+                        successful_reshape = True
+                    except ValueError:
+                        successful_reshape = False
+
+                if successful_reshape and predictions is not None:
+                    dets = self.postprocess(predictions, ratio, iou, conf)
+                else:
+                    dets = None
 
         if dets is not None and len(dets) > 0:
-            final_boxes, final_scores, final_cls_inds = dets[:,
-                                                             :4], dets[:, 4], dets[:, 5]
+            final_boxes, final_scores, final_cls_inds = (
+                dets[:, :4],
+                dets[:, 4],
+                dets[:, 5],
+            )
             scores_mask = final_scores > conf
             if len(classes) > 0:
                 class_mask = np.isin(final_cls_inds, classes)
@@ -226,9 +214,10 @@ class BaseEngine(object):
             scores = final_scores[mask]
             cls_inds = final_cls_inds[mask]
         else:
-            boxes = np.empty((0,4))
+            boxes = np.empty((0, 4))
             scores = np.empty((0,))
             cls_inds = np.empty((0,))
+
         return boxes, scores, cls_inds
 # ... existing code ...
 

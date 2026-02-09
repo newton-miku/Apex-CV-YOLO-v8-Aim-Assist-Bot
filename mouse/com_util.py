@@ -63,7 +63,7 @@ class SerialManager:
             self.ser = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
-                timeout=self.timeout
+                write_timeout=self.timeout
             )
             print(f"串口 {self.port} 连接成功（波特率：{self.baudrate}）")
             return True
@@ -102,6 +102,9 @@ class SerialManager:
             return True
         except serial.SerialException as e:
             print(f"串口数据发送失败：串口通信异常 - {e}")
+            # 修改了判断方式，正确处理异常对象
+            if "Write timeout" not in str(e):
+                self.reconnect_serial()
         except UnicodeEncodeError as e:
             print(f"串口数据发送失败：字符串编码错误 - {e}")
         except Exception as e:
@@ -158,7 +161,7 @@ if __name__ == "__main__":
     if serial_manager.init_serial():
         # 发送数据
         serial_manager.send_to_com("km.version()\r\n")
-        serial_manager.send_to_com("km.move(50,50,10)\r\n")
+        # serial_manager.send_to_com("km.move(50,50,10)\r\n")
         # time.sleep(3)
         # # 键盘命令仅3.9以上版本可用
         # serial_manager.send_to_com("km.string(\"Hello\")\r\n")

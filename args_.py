@@ -10,11 +10,12 @@ def arg_init(args):
     args.add_argument("--model_dir", type=str,
                     default=dirpath + "/model", help="model dir")
     args.add_argument("--model", type=str,
+                    # default="/apex_1w_8n.engine", help="model path")
                     default="/best_8n.engine", help="model path")
     args.add_argument("--end2end", type=bool,
                     default=False, help="use TensorRT efficientNMSPlugin")
     args.add_argument("--classes", type=int,
-                    default=[1,2], help="classes to be detected TensorRT(.trt); can be expanded but needs to be an array. "
+                    default=[1], help="classes to be detected TensorRT(.trt); can be expanded but needs to be an array. "
                     "0 represents 'All', "
                     "1 represents 'Enemy', "
                     "2 represents 'Tag'... "
@@ -24,9 +25,9 @@ def arg_init(args):
     args.add_argument("--half", type=bool,
                     default=True, help="use FP16 to predict PyTorch(.pt)")
     args.add_argument("--iou", type=float,
-                    default=0.8 , help="predict intersection over union")  # 0.8 is recommended
+                    default=0.45 , help="predict intersection over union")  # 0.8 is recommended
     args.add_argument("--conf", type=float,
-                    default=0.5, help="predict confidence")  # 0.6+ is recommended
+                    default=0.6, help="predict confidence")  # 0.6+ is recommended
     screen_height = win32api.GetSystemMetrics(1)
     args.add_argument("--crop_size", type=float,
                     default=640/screen_height, help="the portion to detect from the screen. 1/3 for 1440P or 1/2 for 1080P, imgsz/screen_height=direct")
@@ -37,11 +38,12 @@ def arg_init(args):
     args.add_argument("--aim_deadzone", type=int,
                     default=2, help="aim deadzone, distance in pixels")
     args.add_argument("--aim_fov", type=float,
-                    default=4/3, help="aim field of view, radius=width*aim_fov")
+                    default=1.5, help="aim field of view, radius=width*aim_fov")
+                    # default=4/3, help="aim field of view, radius=width*aim_fov")
     args.add_argument("--caps_lock", type=bool,
                     default=True, help="use CAPS_LOCK as LEFT_LOCK")
     args.add_argument("--fps", type=int,
-                    default=90, help="capture fps(be good to be 90, better than 60)")
+                    default=60, help="capture fps(be good to be 90, better than 60)")
     # args.add_argument("--mouse_speed", type=float,
     #                 default=3.50, help="mouse speed (mouse sensitivity in the game)")
 
